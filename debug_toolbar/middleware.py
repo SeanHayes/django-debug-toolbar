@@ -6,8 +6,11 @@ from __future__ import absolute_import, unicode_literals
 
 import re
 import threading
+import uuid
 
 from django.conf import settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import get_storage_class
 from django.utils.encoding import force_text
 from django.utils.importlib import import_module
 
@@ -26,7 +29,7 @@ def show_toolbar(request):
     if request.META.get('REMOTE_ADDR', None) not in settings.INTERNAL_IPS:
         return False
 
-    if request.is_ajax():
+    if request.is_ajax() and not dt_settings.CONFIG['DEBUG_URI_HEADER']:
         return False
 
     return bool(settings.DEBUG)
@@ -37,7 +40,44 @@ class DebugToolbarMiddleware(object):
     Middleware to set up Debug Toolbar on incoming request and render toolbar
     on outgoing response.
     """
+    HEADER_NAME = 'X-DEBUG-URI'
     debug_toolbars = {}
+
+    @classmethod
+    def get_current_toolbar(cls, method='get'):
+        return getattr(cls.debug_toolbars, method)(threading.current_thread().ident)
+
+    @classmethod
+    def set_current_toolbar(cls, toolbar):
+        cls.debug_toolbars[threading.current_thread().ident] = toolbar
+
+    @classmethod
+    def get_storage(cls, toolbar=None):
+        if toolbar:
+            storage_name = toolbar.config['DEBUG_URI_STORAGE']
+        else:
+            storage_name = dt_settings.CONFIG['DEBUG_URI_STORAGE']
+        
+        return get_storage_class(storage_name)()
+
+    def store_toolbar(self, response, toolbar):
+        html = '<html><body>'
+        
+        content_encoding = response.get('Content-Encoding', '')
+        
+        # don't bother trying to display streaming or encoded data
+        if not getattr(response, 'streaming', False) and 'gzip' not in content_encoding:
+            html += '<textarea>'+response.content+'</textarea>'
+        
+        html += toolbar.render_toolbar()+'</body></html>'
+        
+        name = 'debug-toolbar/%s.html' % uuid.uuid1()
+        
+        storage = self.__class__.get_storage(toolbar=toolbar)
+        
+        name = storage.save(name, ContentFile(html))
+        
+        return storage.url(name)
 
     def process_request(self, request):
         # Decide whether the toolbar is active for this request.
@@ -49,7 +89,7 @@ class DebugToolbarMiddleware(object):
             return
 
         toolbar = DebugToolbar(request)
-        self.__class__.debug_toolbars[threading.current_thread().ident] = toolbar
+        self.__class__.set_current_toolbar(toolbar)
 
         # Activate instrumentation ie. monkey-patch.
         for panel in toolbar.enabled_panels:
@@ -64,7 +104,7 @@ class DebugToolbarMiddleware(object):
         return response
 
     def process_view(self, request, view_func, view_args, view_kwargs):
-        toolbar = self.__class__.debug_toolbars.get(threading.current_thread().ident)
+        toolbar = self.__class__.get_current_toolbar()
         if not toolbar:
             return
 
@@ -77,7 +117,8 @@ class DebugToolbarMiddleware(object):
         return response
 
     def process_response(self, request, response):
-        toolbar = self.__class__.debug_toolbars.pop(threading.current_thread().ident, None)
+        toolbar = self.__class__.get_current_toolbar(method='pop')
+        
         if not toolbar:
             return response
 
@@ -99,6 +140,10 @@ class DebugToolbarMiddleware(object):
         if any((getattr(response, 'streaming', False),
                 'gzip' in content_encoding,
                 content_type not in _HTML_TYPES)):
+            
+            if toolbar.config['DEBUG_URI_HEADER']:
+                response[self.HEADER_NAME] = self.store_toolbar(response, toolbar)
+            
             return response
 
         # Collapse the toolbar by default if SHOW_COLLAPSED is set.

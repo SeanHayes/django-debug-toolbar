@@ -19,7 +19,7 @@ from django.utils.unittest import skipIf, skipUnless
 from debug_toolbar.middleware import DebugToolbarMiddleware, show_toolbar
 
 from .base import BaseTestCase
-from .views import regular_view
+from .views import regular_view, streaming_view, json_view
 
 
 rf = RequestFactory()
@@ -80,11 +80,127 @@ class DebugToolbarTestCase(BaseTestCase):
     def test_middleware_response_only(self):
         DebugToolbarMiddleware().process_response(self.request, self.response)
 
-    def test_middleware_response_insertion(self):
+    def test_middleware_response_insertion__regular_view(self):
         resp = regular_view(self.request, "İ")
         DebugToolbarMiddleware().process_response(self.request, resp)
         # check toolbar insertion before "</body>"
         self.assertContains(resp, '</div>\n</body>')
+
+    def test_middleware_response_insertion__streaming_view__header_off(self):
+        DebugToolbarMiddleware().process_request(self.request)
+        
+        resp = streaming_view(self.request, "İ")
+        
+        DebugToolbarMiddleware().process_response(self.request, resp)
+        # check toolbar insertion before "</body>"
+        
+        content = u''.join([s.decode('utf-8') for s in resp.streaming_content])
+        
+        self.assertNotIn('</div>\n</body>', content)
+        
+        self.assertNotIn(DebugToolbarMiddleware.HEADER_NAME, resp)
+
+    @override_settings(DEBUG_TOOLBAR_CONFIG={'DEBUG_URI_HEADER': True})
+    def test_middleware_response_insertion__streaming_view__header_on(self):
+        DebugToolbarMiddleware().process_request(self.request)
+        
+        resp = streaming_view(self.request, "İ")
+        
+        DebugToolbarMiddleware().process_response(self.request, resp)
+        # check toolbar insertion before "</body>"
+        
+        content = u''.join([s.decode('utf-8') for s in resp.streaming_content])
+        
+        self.assertNotIn('</div>\n</body>', content)
+        
+        uri = resp[DebugToolbarMiddleware.HEADER_NAME]
+        
+        self.assertRegexpMatches(uri, r'^/media/debug-toolbar/[\w-]{36}\.html$')
+        
+        file_name = uri[7:]
+        
+        storage = DebugToolbarMiddleware.get_storage()
+        
+        f = storage.open(file_name)
+        
+        toolbar_markup_page = f.read()
+        
+        self.assertNotIn('<textarea>'+content+'</textarea>', toolbar_markup_page)
+        self.assertIn('</div>\n</body>', toolbar_markup_page)
+        
+        storage.delete(file_name)
+
+    def test_middleware_response_insertion__json_view__header_off(self):
+        DebugToolbarMiddleware().process_request(self.request)
+        
+        resp = json_view(self.request)
+        
+        DebugToolbarMiddleware().process_response(self.request, resp)
+        # check toolbar insertion before "</body>"
+        self.assertNotContains(resp, '</div>\n</body>')
+        self.assertNotIn(DebugToolbarMiddleware.HEADER_NAME, resp)
+
+    @override_settings(DEBUG_TOOLBAR_CONFIG={'DEBUG_URI_HEADER': True})
+    def test_middleware_response_insertion__json_view__header_on__no_ajax(self):
+        self.assertFalse(self.request.is_ajax())
+        
+        DebugToolbarMiddleware().process_request(self.request)
+        
+        resp = json_view(self.request)
+        
+        DebugToolbarMiddleware().process_response(self.request, resp)
+        
+        # check toolbar insertion before "</body>"
+        self.assertNotContains(resp, '</div>\n</body>')
+        
+        uri = resp[DebugToolbarMiddleware.HEADER_NAME]
+        
+        self.assertRegexpMatches(uri, r'^/media/debug-toolbar/[\w-]{36}\.html$')
+        
+        file_name = uri[7:]
+        
+        storage = DebugToolbarMiddleware.get_storage()
+        
+        f = storage.open(file_name)
+        
+        toolbar_markup_page = f.read()
+        
+        self.assertIn('<textarea>'+resp.content+'</textarea>', toolbar_markup_page)
+        self.assertIn('</div>\n</body>', toolbar_markup_page)
+        
+        storage.delete(file_name)
+    
+    @override_settings(DEBUG_TOOLBAR_CONFIG={'DEBUG_URI_HEADER': True})
+    def test_middleware_response_insertion__json_view__header_on__with_ajax(self):
+        self.request.META['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest'
+        
+        self.assertTrue(self.request.is_ajax())
+        
+        DebugToolbarMiddleware().process_request(self.request)
+        
+        resp = json_view(self.request)
+        
+        DebugToolbarMiddleware().process_response(self.request, resp)
+        
+        # check toolbar insertion before "</body>"
+        self.assertNotContains(resp, '</div>\n</body>')
+        
+        uri = resp[DebugToolbarMiddleware.HEADER_NAME]
+        
+        self.assertRegexpMatches(uri, r'^/media/debug-toolbar/[\w-]{36}\.html$')
+        
+        file_name = uri[7:]
+        
+        storage = DebugToolbarMiddleware.get_storage()
+        
+        f = storage.open(file_name)
+        
+        toolbar_markup_page = f.read()
+        
+        self.assertIn('<textarea>'+resp.content+'</textarea>', toolbar_markup_page)
+        self.assertIn('</div>\n</body>', toolbar_markup_page)
+        
+        storage.delete(file_name)
 
 
 @override_settings(DEBUG=True)

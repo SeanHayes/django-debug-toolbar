@@ -35,6 +35,8 @@ CONFIG_DEFAULTS = {
     'INTERCEPT_REDIRECTS': False,
     'SHOW_TEMPLATE_CONTEXT': True,
     'SQL_WARNING_THRESHOLD': 500,   # milliseconds
+    'DEBUG_URI_HEADER': False,
+    'DEBUG_URI_STORAGE': None
 }
 
 USER_CONFIG = getattr(settings, 'DEBUG_TOOLBAR_CONFIG', {})
