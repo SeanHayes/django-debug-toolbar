@@ -45,7 +45,7 @@ class DebugToolbarMiddleware(object):
 
     @classmethod
     def get_current_toolbar(cls, method='get'):
-        return getattr(cls.debug_toolbars, method)(threading.current_thread().ident)
+        return getattr(cls.debug_toolbars, method)(threading.current_thread().ident, None)
 
     @classmethod
     def set_current_toolbar(cls, toolbar):
